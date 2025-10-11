@@ -2,9 +2,9 @@ package db
 
 import (
     "github.com/jmoiron/sqlx"
-    _ "github.com/go-sql-driver/mysql"
+    _ "github.com/jackc/pgx/v5/stdlib"
 )
 
 func Connect(dsn string) (*sqlx.DB, error) {
-    return sqlx.Connect("mysql", dsn)
+    return sqlx.Connect("pgx", dsn)
 }
