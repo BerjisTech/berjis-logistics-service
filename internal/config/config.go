@@ -21,7 +21,7 @@ func Load() Config {
         AppName:        getenv("APP_NAME", "berjis-logistics"),
         Env:            getenv("APP_ENV", "development"),
         Port:           getenv("PORT", "8081"),
-        DatabaseURL:    getenv("DATABASE_URL", "root:password@tcp(localhost:3306)/berjis_logistics?parseTime=true"),
+        DatabaseURL:    getenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5434/berjis_logistics?sslmode=disable"),
         CoreAPIBase:    getenv("CORE_API_BASE", "http://localhost:8080"),
         AllowedOrigins: getenv("ALLOWED_ORIGINS", "*"),
     }
