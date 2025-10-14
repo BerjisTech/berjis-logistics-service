@@ -20,7 +20,8 @@ func main() {
     if err != nil {
         log.Printf("warn: failed to connect to logistics DB: %v", err)
     } else {
-        if err := migrate.Runner{Dir: "./migrations"}.Up(conn); err != nil {
+        runner := migrate.Runner{Dir: "./migrations"}
+        if err := runner.Up(conn); err != nil {
             log.Printf("warn: migrations failed: %v", err)
         }
     }
