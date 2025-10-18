@@ -26,7 +26,7 @@ func main() {
         }
     }
 
-    app := server.New(server.Options{AllowedOrigins: cfg.AllowedOrigins, DB: conn})
+    app := server.New(server.Options{AllowedOrigins: cfg.AllowedOrigins, DB: conn, Env: cfg.Env, AuthHS256: cfg.AuthHS256Secret})
     addr := ":" + cfg.Port
     log.Printf("starting %s on %s (env=%s)", cfg.AppName, addr, cfg.Env)
     if err := app.Listen(addr); err != nil {

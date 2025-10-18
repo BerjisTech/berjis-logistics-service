@@ -1,0 +1,80 @@
+# Public Warehouses Search
+GET http://localhost:8081/v1/public/warehouses?q=central&near=0.0236,37.9062&radius_km=30
+
+###
+# Public Warehouse Detail
+GET http://localhost:8081/v1/public/warehouses/{{WAREHOUSE_ID}}
+
+###
+# Public Products Search
+GET http://localhost:8081/v1/public/products?q=bolt&near=0.0236,37.9062&radius_km=50
+
+###
+# Public Product Detail
+GET http://localhost:8081/v1/public/products/{{INVENTORY_ID}}
+
+###
+# Public Transport Search by kind + capacity + proximity
+GET http://localhost:8081/v1/public/transport?q=van&min_capacity_kg=500&near=0.0236,37.9062&radius_km=40
+
+###
+# Vehicle Tracking (authenticated)
+POST http://localhost:8081/v1/vehicles/{{VEHICLE_ID}}/track
+Content-Type: application/json
+Authorization: Bearer {{JWT}}
+
+{ "lat": 0.033, "lng": 37.002 }
+
+###
+# Device Ingest (single)
+POST http://localhost:8081/v1/ingest/telemetry
+X-Device-Id: {{DEVICE_ID}}
+X-Device-Token: {{DEVICE_TOKEN}}
+Content-Type: application/json
+
+{ "lat": 0.034, "lng": 37.003 }
+
+###
+# Device Ingest (batch)
+POST http://localhost:8081/v1/ingest/telemetry
+X-Device-Id: {{DEVICE_ID}}
+X-Device-Token: {{DEVICE_TOKEN}}
+Content-Type: application/json
+
+{ "data": [
+  { "lat": 0.034, "lng": 37.003, "ts": "2025-01-01T10:00:00Z"},
+  { "lat": 0.035, "lng": 37.004, "ts": "2025-01-01T10:00:05Z"}
+]}
+
+###
+# Assets
+POST http://localhost:8081/v1/assets
+Content-Type: application/json
+Authorization: Bearer {{JWT}}
+
+{ "kind": "container", "name": "CMA CGM 123", "identifier": "CMAU1234567" }
+
+###
+GET http://localhost:8081/v1/assets
+Authorization: Bearer {{JWT}}
+
+###
+POST http://localhost:8081/v1/assets/{{ASSET_ID}}/track
+Content-Type: application/json
+Authorization: Bearer {{JWT}}
+
+{ "lat": 0.036, "lng": 37.005 }
+
+###
+POST http://localhost:8081/v1/assets/{{ASSET_ID}}/devices
+Content-Type: application/json
+Authorization: Bearer {{JWT}}
+
+{ "name": "Tracker-01", "kind": "teltonika", "serial": "T1234" }
+
+###
+POST http://localhost:8081/v1/assets/{{ASSET_ID}}/assign
+Content-Type: application/json
+Authorization: Bearer {{JWT}}
+
+{ "vehicleId": "{{VEHICLE_ID}}" }

@@ -9,6 +9,7 @@ type Config struct {
     DatabaseURL    string
     CoreAPIBase    string
     AllowedOrigins string
+    AuthHS256Secret string
 }
 
 func getenv(k, def string) string {
@@ -24,5 +25,6 @@ func Load() Config {
         DatabaseURL:    getenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5434/berjis_logistics?sslmode=disable"),
         CoreAPIBase:    getenv("CORE_API_BASE", "http://localhost:8080"),
         AllowedOrigins: getenv("ALLOWED_ORIGINS", "*"),
+        AuthHS256Secret: getenv("AUTH_JWT_HS256_SECRET", ""),
     }
 }
