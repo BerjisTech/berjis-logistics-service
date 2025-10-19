@@ -16,7 +16,6 @@ import (
     websocketlib "github.com/gofiber/websocket/v2"
     "golang.org/x/crypto/bcrypt"
 )
-
 type Options struct {
     AllowedOrigins string
     DB             *sqlx.DB
@@ -46,6 +45,30 @@ type InventoryItem struct {
     SKU         string `db:"sku" json:"sku"`
     Name        string `db:"name" json:"name"`
     Quantity    int    `db:"quantity" json:"quantity"`
+}
+
+type Vehicle struct {
+    ID          string     `db:"id" json:"id"`
+    Plate       string     `db:"plate" json:"plate"`
+    Kind        *string    `db:"kind" json:"kind,omitempty"`
+    CapacityKg  *float64   `db:"capacity_kg" json:"capacityKg,omitempty"`
+    OwnerUserID *string    `db:"owner_user_id" json:"ownerUserId,omitempty"`
+    Lat         *float64   `db:"lat" json:"lat,omitempty"`
+    Lng         *float64   `db:"lng" json:"lng,omitempty"`
+    LastSeen    *time.Time `db:"last_seen" json:"lastSeen,omitempty"`
+}
+
+type Contact struct {
+    ID          string    `db:"id" json:"id"`
+    OwnerUserID string    `db:"owner_user_id" json:"ownerUserId"`
+    Kind        string    `db:"kind" json:"kind"`
+    Name        string    `db:"name" json:"name"`
+    Email       *string   `db:"email" json:"email,omitempty"`
+    Phone       *string   `db:"phone" json:"phone,omitempty"`
+    Company     *string   `db:"company" json:"company,omitempty"`
+    Notes       *string   `db:"notes" json:"notes,omitempty"`
+    CreatedAt   time.Time `db:"created_at" json:"createdAt"`
+    UpdatedAt   time.Time `db:"updated_at" json:"updatedAt"`
 }
 
 type Booking struct {
@@ -91,6 +114,25 @@ func broadcastJSON(msg string) {
             i--
         }
     }
+}
+
+
+// Generate a short public tracking code (A-Z0-9)
+func genTrackingCode(n int) string {
+    const alphabet = "23456789ABCDEFGHJKLMNPQRSTUVWXYZ" // avoid ambiguous chars
+    b := make([]byte, n)
+    rb := make([]byte, n)
+    if _, err := rand.Read(rb); err == nil {
+        for i := 0; i < n; i++ {
+            b[i] = alphabet[int(rb[i])%len(alphabet)]
+        }
+    } else {
+        hx := hex.EncodeToString(rb)
+        for i := 0; i < n; i++ {
+            b[i] = alphabet[int(hx[i])%len(alphabet)]
+        }
+    }
+    return string(b)
 }
 
 // Helpers for permissions
@@ -1007,6 +1049,118 @@ func New(opts Options) *fiber.App {
         if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
         return c.JSON(fiber.Map{"success": true})
     })
+    // Vehicles CRUD (owner-managed)
+    app.Get("/v1/vehicles", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        out := []Vehicle{}
+        if err := opts.DB.Select(&out, `SELECT id, plate, kind, capacity_kg, owner_user_id, lat, lng, last_seen FROM vehicles WHERE owner_user_id=$1 ORDER BY created_at DESC`, uid); err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+        }
+        return c.JSON(fiber.Map{"success": true, "data": out})
+    })
+    app.Post("/v1/vehicles", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Plate string `json:"plate"`; Kind *string `json:"kind"`; CapacityKg *float64 `json:"capacityKg"` }
+        if err := c.BodyParser(&in); err != nil || strings.TrimSpace(in.Plate) == "" {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "plate required"})
+        }
+        var v Vehicle
+        if err := opts.DB.Get(&v, `INSERT INTO vehicles (plate, kind, capacity_kg, owner_user_id)
+          VALUES ($1,$2,$3,$4)
+          RETURNING id, plate, kind, capacity_kg, owner_user_id, lat, lng, last_seen`, in.Plate, in.Kind, in.CapacityKg, uid); err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+        }
+        return c.Status(fiber.StatusCreated).JSON(fiber.Map{"success": true, "data": v})
+    })
+    app.Put("/v1/vehicles/:id", func(c *fiber.Ctx) error {
+        id := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Plate *string `json:"plate"`; Kind *string `json:"kind"`; CapacityKg *float64 `json:"capacityKg"` }
+        if err := c.BodyParser(&in); err != nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        var v Vehicle
+        if err := opts.DB.Get(&v, `UPDATE vehicles SET
+            plate=COALESCE(NULLIF($1,''), plate),
+            kind=COALESCE($2, kind),
+            capacity_kg=COALESCE($3, capacity_kg),
+            updated_at=now()
+          WHERE id=$4 AND owner_user_id=$5
+          RETURNING id, plate, kind, capacity_kg, owner_user_id, lat, lng, last_seen`, in.Plate, in.Kind, in.CapacityKg, id, uid); err != nil {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+        }
+        return c.JSON(fiber.Map{"success": true, "data": v})
+    })
+    app.Delete("/v1/vehicles/:id", func(c *fiber.Ctx) error {
+        id := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        res, err := opts.DB.Exec(`DELETE FROM vehicles WHERE id=$1 AND owner_user_id=$2`, id, uid)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        n, _ := res.RowsAffected(); if n == 0 { return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false}) }
+        return c.JSON(fiber.Map{"success": true})
+    })
+    // Contacts (basic CRM)
+    app.Get("/v1/contacts", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        kind := c.Query("kind")
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        out := []Contact{}
+        if kind != "" {
+            if err := opts.DB.Select(&out, `SELECT id, owner_user_id, kind, name, email, phone, company, notes, created_at, updated_at FROM contacts WHERE owner_user_id=$1 AND kind=$2 ORDER BY updated_at DESC`, uid, kind); err != nil {
+                return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+            }
+        } else {
+            if err := opts.DB.Select(&out, `SELECT id, owner_user_id, kind, name, email, phone, company, notes, created_at, updated_at FROM contacts WHERE owner_user_id=$1 ORDER BY updated_at DESC`, uid); err != nil {
+                return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+            }
+        }
+        return c.JSON(fiber.Map{"success": true, "data": out})
+    })
+    app.Post("/v1/contacts", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Kind string `json:"kind"`; Name string `json:"name"`; Email *string `json:"email"`; Phone *string `json:"phone"`; Company *string `json:"company"`; Notes *string `json:"notes"` }
+        if err := c.BodyParser(&in); err != nil || strings.TrimSpace(in.Name) == "" || strings.TrimSpace(in.Kind) == "" {
+            return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false})
+        }
+        var row Contact
+        if err := opts.DB.Get(&row, `INSERT INTO contacts (owner_user_id, kind, name, email, phone, company, notes)
+           VALUES ($1,$2,$3,$4,$5,$6,$7)
+           RETURNING id, owner_user_id, kind, name, email, phone, company, notes, created_at, updated_at`, uid, in.Kind, in.Name, in.Email, in.Phone, in.Company, in.Notes); err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+        }
+        return c.Status(fiber.StatusCreated).JSON(fiber.Map{"success": true, "data": row})
+    })
+    app.Put("/v1/contacts/:id", func(c *fiber.Ctx) error {
+        id := c.Params("id"); uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Kind *string `json:"kind"`; Name *string `json:"name"`; Email *string `json:"email"`; Phone *string `json:"phone"`; Company *string `json:"company"`; Notes *string `json:"notes"` }
+        if err := c.BodyParser(&in); err != nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        var row Contact
+        if err := opts.DB.Get(&row, `UPDATE contacts SET
+            kind=COALESCE($1, kind),
+            name=COALESCE(NULLIF($2,''), name),
+            email=COALESCE($3, email),
+            phone=COALESCE($4, phone),
+            company=COALESCE($5, company),
+            notes=COALESCE($6, notes),
+            updated_at=now()
+          WHERE id=$7 AND owner_user_id=$8
+          RETURNING id, owner_user_id, kind, name, email, phone, company, notes, created_at, updated_at`, in.Kind, in.Name, in.Email, in.Phone, in.Company, in.Notes, id, uid); err != nil {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+        }
+        return c.JSON(fiber.Map{"success": true, "data": row})
+    })
+    app.Delete("/v1/contacts/:id", func(c *fiber.Ctx) error {
+        id := c.Params("id"); uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        res, err := opts.DB.Exec(`DELETE FROM contacts WHERE id=$1 AND owner_user_id=$2`, id, uid)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        n, _ := res.RowsAffected(); if n == 0 { return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false}) }
+        return c.JSON(fiber.Map{"success": true})
+    })
     // Vehicles: register tracking device (owner only)
     app.Post("/v1/vehicles/:id/devices", func(c *fiber.Ctx) error {
         vid := c.Params("id")
@@ -1101,7 +1255,221 @@ func New(opts Options) *fiber.App {
     })
 
     
-    // Driver role flow
+        // Orders: create
+    app.Post("/v1/orders", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        // Minimal order for now
+        var row struct{ ID string `db:"id" json:"id"`; Status string `db:"status" json:"status"`; CreatedAt string `db:"created_at" json:"createdAt"` }
+        if err := opts.DB.Get(&row, `INSERT INTO orders DEFAULT VALUES RETURNING id, status, created_at`); err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+        }
+        broadcastJSON(fmt.Sprintf(`{"kind":"order","event":"created","id":"%s","userId":"%s"}`, row.ID, uid))
+        return c.Status(fiber.StatusCreated).JSON(fiber.Map{"success": true, "data": row})
+    })
+
+    // Orders: detail
+    app.Get("/v1/orders/:id", func(c *fiber.Ctx) error {
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        oid := c.Params("id")
+        var row struct{ ID string `db:"id" json:"id"`; Status string `db:"status" json:"status"`; CreatedAt string `db:"created_at" json:"createdAt"`; UpdatedAt string `db:"updated_at" json:"updatedAt"` }
+        if err := opts.DB.Get(&row, `SELECT id, status, created_at, updated_at FROM orders WHERE id=$1`, oid); err != nil {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+        }
+        return c.JSON(fiber.Map{"success": true, "data": row})
+    })
+
+    // Shipments: create delivery from order with optional route
+    app.Post("/v1/shipments", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        _ = uid
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct {
+            OrderID *string `json:"orderId"`
+            VehicleID *string `json:"vehicleId"`
+            DriverID *string `json:"driverId"`
+            Route []struct{ Address string `json:"address"` } `json:"route"`
+        }
+        if err := c.BodyParser(&in); err != nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        var d struct{ ID string `db:"id" json:"id"`; Status string `db:"status" json:"status"` }
+        if err := opts.DB.Get(&d, `INSERT INTO deliveries (order_id, driver_id, vehicle_id) VALUES ($1,$2,$3) RETURNING id, status`, in.OrderID, in.DriverID, in.VehicleID); err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+        }
+        // Insert route stops if provided
+        for i, s := range in.Route {
+            if strings.TrimSpace(s.Address) == "" { continue }
+            _, _ = opts.DB.Exec(`INSERT INTO route_stops (delivery_id, seq, address) VALUES ($1,$2,$3)`, d.ID, i+1, s.Address)
+        }
+        broadcastJSON(fmt.Sprintf(`{"kind":"delivery","event":"created","id":"%s"}`, d.ID))
+        return c.Status(fiber.StatusCreated).JSON(fiber.Map{"success": true, "data": d})
+    })
+
+    // Shipments: track (auth) by id
+    app.Get("/v1/shipments/:id/track", func(c *fiber.Ctx) error {
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        id := c.Params("id")
+        var basic struct {
+            DeliveryID string `db:"delivery_id" json:"deliveryId"`
+            Status string `db:"status" json:"status"`
+            VehicleID *string `db:"vehicle_id" json:"vehicleId,omitempty"`
+            Plate *string `db:"plate" json:"plate,omitempty"`
+            Lat *float64 `db:"lat" json:"lat,omitempty"`
+            Lng *float64 `db:"lng" json:"lng,omitempty"`
+            LastSeen *time.Time `db:"last_seen" json:"lastSeen,omitempty"`
+            TrackingCode *string `db:"tracking_code" json:"trackingCode,omitempty"`
+        }
+        err := opts.DB.Get(&basic, `SELECT d.id AS delivery_id, d.status, d.tracking_code, v.id AS vehicle_id, v.plate, v.lat, v.lng, v.last_seen
+           FROM deliveries d LEFT JOIN vehicles v ON v.id = d.vehicle_id WHERE d.id=$1`, id)
+        if err != nil { return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false}) }
+        stops := []struct { Seq int `db:"seq" json:"seq"`; Address string `db:"address" json:"address"`; Status string `db:"status" json:"status"` }{}
+        _ = opts.DB.Select(&stops, `SELECT seq, address, status FROM route_stops WHERE delivery_id=$1 ORDER BY seq ASC`, basic.DeliveryID)
+        positions := []struct { Lat float64 `db:"lat" json:"lat"`; Lng float64 `db:"lng" json:"lng"`; Ts time.Time `db:"ts" json:"ts"` }{}
+        if basic.VehicleID != nil {
+            _ = opts.DB.Select(&positions, `SELECT lat, lng, ts FROM device_positions WHERE vehicle_id=$1 ORDER BY ts DESC LIMIT 20`, *basic.VehicleID)
+        }
+        return c.JSON(fiber.Map{"success": true, "data": fiber.Map{"delivery": basic, "route": stops, "positions": positions}})
+    })
+
+    // Shipments: append route leg
+    app.Post("/v1/shipments/:id/route", func(c *fiber.Ctx) error {
+        sid := c.Params("id")
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Address string `json:"address"` }
+        if err := c.BodyParser(&in); err != nil || strings.TrimSpace(in.Address)=="" { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        var next int
+        _ = opts.DB.Get(&next, `SELECT COALESCE(MAX(seq),0)+1 AS next FROM route_stops WHERE delivery_id=$1`, sid)
+        _, err := opts.DB.Exec(`INSERT INTO route_stops (delivery_id, seq, address) VALUES ($1,$2,$3)`, sid, next, in.Address)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        broadcastJSON(fmt.Sprintf(`{"kind":"delivery","event":"route_added","id":"%s","seq":%d}`, sid, next))
+        return c.JSON(fiber.Map{"success": true, "data": fiber.Map{"seq": next}})
+    })
+
+    // Deliveries: complete with Proof of Delivery
+    app.Post("/v1/deliveries/:id/complete", func(c *fiber.Ctx) error {
+        did := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { SignedBy *string `json:"signedBy"`; PhotoURL *string `json:"photoUrl"`; Ts *time.Time `json:"ts"` }
+        if err := c.BodyParser(&in); err != nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        // Permission: vehicle owner or assigned driver
+        var allowed bool
+        _ = opts.DB.Get(&allowed, `SELECT EXISTS (SELECT 1 FROM deliveries d JOIN vehicles v ON v.id=d.vehicle_id WHERE d.id=$1 AND v.owner_user_id=$2)`, did, uid)
+        if !allowed { _ = opts.DB.Get(&allowed, `SELECT EXISTS (SELECT 1 FROM deliveries d JOIN drivers dr ON dr.id=d.driver_id WHERE d.id=$1 AND dr.user_id=$2)`, did, uid) }
+        if !allowed { return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false}) }
+        _, err := opts.DB.Exec(`UPDATE deliveries SET status='completed', proof_signed_by=$1, proof_photo_url=$2, proof_ts=COALESCE($3, now()), updated_at=now() WHERE id=$4`, in.SignedBy, in.PhotoURL, in.Ts, did)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        broadcastJSON(fmt.Sprintf(`{"kind":"delivery","event":"completed","id":"%s"}`, did))
+        return c.JSON(fiber.Map{"success": true})
+    })    // Transport: list jobs (driver view)
+    app.Get("/v1/transport/jobs", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        mine := c.Query("mine") == "1"
+        rows := []struct {
+            ID string `db:"id" json:"id"`
+            Status string `db:"status" json:"status"`
+            PickupAddress *string `db:"pickup_address" json:"pickupAddress,omitempty"`
+            DeliveryAddress *string `db:"delivery_address" json:"deliveryAddress,omitempty"`
+            CargoDesc *string `db:"cargo_desc" json:"cargoDesc,omitempty"`
+            VehicleKind *string `db:"vehicle_kind" json:"vehicleKind,omitempty"`
+            CapacityKg *float64 `db:"capacity_kg" json:"capacityKg,omitempty"`
+            Payment *float64 `db:"payment" json:"payment,omitempty"`
+            Currency *string `db:"currency" json:"currency,omitempty"`
+            ScheduledPickup *time.Time `db:"scheduled_pickup" json:"scheduledPickup,omitempty"`
+        }{}
+        if mine {
+            // jobs assigned to me (as driver)
+            var did string
+            _ = opts.DB.Get(&did, `SELECT id FROM drivers WHERE user_id=$1`, uid)
+            if did == "" { return c.JSON(fiber.Map{"success": true, "data": rows}) }
+            _ = opts.DB.Select(&rows, `SELECT id, status, pickup_address, delivery_address, cargo_desc, vehicle_kind, capacity_kg, payment, currency, scheduled_pickup FROM transport_jobs WHERE driver_id=$1 ORDER BY created_at DESC`, did)
+        } else {
+            _ = opts.DB.Select(&rows, `SELECT id, status, pickup_address, delivery_address, cargo_desc, vehicle_kind, capacity_kg, payment, currency, scheduled_pickup FROM transport_jobs WHERE status='posted' ORDER BY created_at DESC LIMIT 100`)
+        }
+        return c.JSON(fiber.Map{"success": true, "data": rows})
+    })
+
+    // Transport: create job
+    app.Post("/v1/transport/jobs", func(c *fiber.Ctx) error {
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct {
+            PickupAddress *string `json:"pickupAddress"`
+            DeliveryAddress *string `json:"deliveryAddress"`
+            CargoDesc *string `json:"cargoDesc"`
+            VehicleKind *string `json:"vehicleKind"`
+            CapacityKg *float64 `json:"capacityKg"`
+            Payment *float64 `json:"payment"`
+            Currency *string `json:"currency"`
+            ScheduledPickup *time.Time `json:"scheduledPickup"`
+        }
+        if err := c.BodyParser(&in); err != nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        var row struct { ID string `db:"id" json:"id"`; Status string `db:"status" json:"status"` }
+        if err := opts.DB.Get(&row, `INSERT INTO transport_jobs (created_by_user_id, pickup_address, delivery_address, cargo_desc, vehicle_kind, capacity_kg, payment, currency, scheduled_pickup)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id, status`, uid, in.PickupAddress, in.DeliveryAddress, in.CargoDesc, in.VehicleKind, in.CapacityKg, in.Payment, in.Currency, in.ScheduledPickup); err != nil {
+            return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+        }
+        broadcastJSON(fmt.Sprintf(`{"kind":"job","event":"created","id":"%s"}`, row.ID))
+        return c.Status(fiber.StatusCreated).JSON(fiber.Map{"success": true, "data": row})
+    })
+
+    // Transport: assign job to driver (self-accept)
+    app.Put("/v1/transport/jobs/:id/assign", func(c *fiber.Ctx) error {
+        jid := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var did string
+        if err := opts.DB.Get(&did, `SELECT id FROM drivers WHERE user_id=$1 AND status='verified'`, uid); err != nil || did == "" {
+            return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false})
+        }
+        var in struct { VehicleID *string `json:"vehicleId"` }
+        _ = c.BodyParser(&in)
+        // Assign if still posted
+        res, err := opts.DB.Exec(`UPDATE transport_jobs SET status='assigned', driver_id=$1, vehicle_id=COALESCE($2, vehicle_id), updated_at=now() WHERE id=$3 AND status='posted'`, did, in.VehicleID, jid)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        n, _ := res.RowsAffected(); if n == 0 { return c.Status(fiber.StatusConflict).JSON(fiber.Map{"success": false, "message": "job not available"}) }
+        broadcastJSON(fmt.Sprintf(`{"kind":"job","event":"assigned","id":"%s","driverId":"%s"}`, jid, did))
+        return c.JSON(fiber.Map{"success": true})
+    })
+
+    // Transport: job tracking position update (driver)
+    app.Post("/v1/transport/jobs/:id/tracking", func(c *fiber.Ctx) error {
+        jid := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var did string
+        if err := opts.DB.Get(&did, `SELECT id FROM drivers WHERE user_id=$1`, uid); err != nil || did == "" {
+            return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false})
+        }
+        // Find job vehicle assigned and driver matches
+        var job struct { VehicleID *string `db:"vehicle_id"`; DriverID *string `db:"driver_id"` }
+        if err := opts.DB.Get(&job, `SELECT vehicle_id, driver_id FROM transport_jobs WHERE id=$1 AND status IN ('assigned','in_transit')`, jid); err != nil {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+        }
+        if job.DriverID == nil || *job.DriverID != did { return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false}) }
+        if job.VehicleID == nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false, "message": "vehicle not set"}) }
+        var in struct { Lat float64 `json:"lat"`; Lng float64 `json:"lng"` }
+        if err := c.BodyParser(&in); err != nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        _, err := opts.DB.Exec(`UPDATE vehicles SET lat=$1, lng=$2, last_seen=now(), updated_at=now() WHERE id=$3`, in.Lat, in.Lng, *job.VehicleID)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        broadcastPosition("vehicle", *job.VehicleID, in.Lat, in.Lng, time.Now().UTC())
+        return c.JSON(fiber.Map{"success": true})
+    })
+
+    // Transport: complete job
+    app.Post("/v1/transport/jobs/:id/complete", func(c *fiber.Ctx) error {
+        jid := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var did string
+        _ = opts.DB.Get(&did, `SELECT id FROM drivers WHERE user_id=$1`, uid)
+        if did == "" { return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false}) }
+        res, err := opts.DB.Exec(`UPDATE transport_jobs SET status='completed', updated_at=now() WHERE id=$1 AND driver_id=$2`, jid, did)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        n, _ := res.RowsAffected(); if n == 0 { return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false}) }
+        broadcastJSON(fmt.Sprintf(`{"kind":"job","event":"completed","id":"%s"}`, jid))
+        return c.JSON(fiber.Map{"success": true})
+    })// Driver role flow
     app.Post("/v1/drivers/apply", func(c *fiber.Ctx) error {
         uid := auth.UserID(c)
         if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
@@ -1154,5 +1522,121 @@ func New(opts Options) *fiber.App {
         return c.JSON(fiber.Map{"success": true})
     })
 
+        // Enable/disable and generate public tracking code for a delivery
+    app.Post("/v1/deliveries/:id/public-tracking", func(c *fiber.Ctx) error {
+        did := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Enabled *bool `json:"enabled"` }
+        _ = c.BodyParser(&in)
+        enable := true
+        if in.Enabled != nil { enable = *in.Enabled }
+        // Permission: vehicle owner or assigned driver
+        var allowed bool
+        _ = opts.DB.Get(&allowed, `SELECT EXISTS (
+            SELECT 1 FROM deliveries d JOIN vehicles v ON v.id = d.vehicle_id WHERE d.id=$1 AND v.owner_user_id=$2
+        )`, did, uid)
+        if !allowed {
+            _ = opts.DB.Get(&allowed, `SELECT EXISTS (
+              SELECT 1 FROM deliveries d JOIN drivers dr ON dr.id = d.driver_id WHERE d.id=$1 AND dr.user_id=$2
+            )`, did, uid)
+        }
+        if !allowed { return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false}) }
+        // Fetch current code
+        var cur struct { Code *string `db:"tracking_code"`; Enabled bool `db:"tracking_enabled"` }
+        if err := opts.DB.Get(&cur, `SELECT tracking_code, tracking_enabled FROM deliveries WHERE id=$1`, did); err != nil {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+        }
+        code := cur.Code
+        if enable && (code == nil || *code == "") {
+            // Generate unique code
+            for i := 0; i < 5; i++ {
+                ctry := genTrackingCode(10)
+                var exists bool
+                _ = opts.DB.Get(&exists, `SELECT EXISTS (SELECT 1 FROM deliveries WHERE LOWER(tracking_code)=LOWER($1))`, ctry)
+                if !exists { code = &ctry; break }
+            }
+            if code == nil {
+                return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false, "message": "could not generate tracking code"})
+            }
+        }
+        // Update row
+        _, err := opts.DB.Exec(`UPDATE deliveries SET tracking_enabled=$1, tracking_code=COALESCE($2, tracking_code), updated_at=now() WHERE id=$3`, enable, code, did)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        // Build URL if origin is known (Env/AllowedOrigins not used here)
+        return c.JSON(fiber.Map{"success": true, "data": fiber.Map{"enabled": enable, "trackingCode": code}})
+    })
+
+    // Public: track a delivery by tracking code
+    app.Get("/v1/public/track/:code", func(c *fiber.Ctx) error {
+        code := c.Params("code")
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        // Basic delivery + vehicle
+        var basic struct {
+            DeliveryID string `db:"delivery_id" json:"deliveryId"`
+            Status string `db:"status" json:"status"`
+            VehicleID *string `db:"vehicle_id" json:"vehicleId,omitempty"`
+            Plate *string `db:"plate" json:"plate,omitempty"`
+            Lat *float64 `db:"lat" json:"lat,omitempty"`
+            Lng *float64 `db:"lng" json:"lng,omitempty"`
+            LastSeen *time.Time `db:"last_seen" json:"lastSeen,omitempty"`
+        }
+        err := opts.DB.Get(&basic, `SELECT d.id AS delivery_id, d.status, v.id AS vehicle_id, v.plate, v.lat, v.lng, v.last_seen
+           FROM deliveries d
+           LEFT JOIN vehicles v ON v.id = d.vehicle_id
+           WHERE d.tracking_enabled = true AND LOWER(d.tracking_code) = LOWER($1)`, code)
+        if err != nil {
+            return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false, "message": "not found"})
+        }
+        // Route stops
+        stops := []struct { Seq int `db:"seq" json:"seq"`; Address string `db:"address" json:"address"`; Status string `db:"status" json:"status"` }{}
+        _ = opts.DB.Select(&stops, `SELECT seq, address, status FROM route_stops WHERE delivery_id=$1 ORDER BY seq ASC`, basic.DeliveryID)
+        // Recent positions (if telemetry exists)
+        positions := []struct { Lat float64 `db:"lat" json:"lat"`; Lng float64 `db:"lng" json:"lng"`; Ts time.Time `db:"ts" json:"ts"` }{}
+        if basic.VehicleID != nil {
+            _ = opts.DB.Select(&positions, `SELECT lat, lng, ts FROM device_positions WHERE vehicle_id=$1 ORDER BY ts DESC LIMIT 20`, *basic.VehicleID)
+        }
+        return c.JSON(fiber.Map{"success": true, "data": fiber.Map{
+            "delivery": basic,
+            "route": stops,
+            "positions": positions,
+        }})
+        })
+
+    // Route stop: set coordinates (owner or assigned driver)
+    app.Post("/v1/route-stops/:id/coords", func(c *fiber.Ctx) error {
+        rsid := c.Params("id")
+        uid := auth.UserID(c)
+        if opts.DB == nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        var in struct { Lat *float64 `json:"lat"`; Lng *float64 `json:"lng"` }
+        if err := c.BodyParser(&in); err != nil || in.Lat == nil || in.Lng == nil { return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false}) }
+        var perm struct{ DeliveryID string `db:"delivery_id"`; VehicleOwnerID *string `db:"vehicle_owner_id"`; DriverUserID *string `db:"driver_user_id"` }
+        err := opts.DB.Get(&perm, `SELECT rs.delivery_id, v.owner_user_id AS vehicle_owner_id, dr.user_id AS driver_user_id FROM route_stops rs
+            JOIN deliveries d ON d.id = rs.delivery_id
+            LEFT JOIN vehicles v ON v.id = d.vehicle_id
+            LEFT JOIN drivers dr ON dr.id = d.driver_id
+            WHERE rs.id=$1`, rsid)
+        if err != nil { return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false}) }
+        allowed := false
+        if perm.VehicleOwnerID != nil && *perm.VehicleOwnerID == uid { allowed = true }
+        if perm.DriverUserID != nil && *perm.DriverUserID == uid { allowed = true }
+        if !allowed { return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false}) }
+        _, err = opts.DB.Exec(`UPDATE route_stops SET lat=$1, lng=$2 WHERE id=$3`, in.Lat, in.Lng, rsid)
+        if err != nil { return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false}) }
+        return c.JSON(fiber.Map{"success": true})
+    })
+
     return app
 }
+
+
+
+
+
+
+
+
+
+
+
+

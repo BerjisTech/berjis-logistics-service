@@ -78,3 +78,96 @@ Content-Type: application/json
 Authorization: Bearer {{JWT}}
 
 { "vehicleId": "{{VEHICLE_ID}}" }
+###
+# Deliveries: enable public tracking (returns tracking code)
+POST http://localhost:8081/v1/deliveries/{{DELIVERY_ID}}/public-tracking
+Content-Type: application/json
+Authorization: Bearer {{JWT}}
+
+{ "enabled": true }
+
+###
+# Public: Track by code (no auth)
+GET http://localhost:8081/v1/public/track/{{TRACKING_CODE}}
+###
+# Orders
+POST http://localhost:8081/v1/orders
+Authorization: Bearer {{JWT}}
+
+###
+GET http://localhost:8081/v1/orders/{{ORDER_ID}}
+Authorization: Bearer {{JWT}}
+
+###
+# Shipments
+POST http://localhost:8081/v1/shipments
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "orderId": "{{ORDER_ID}}", "vehicleId": "{{VEHICLE_ID}}", "route": [ { "address": "Origin Address" }, { "address": "Destination Address" } ] }
+
+###
+GET http://localhost:8081/v1/shipments/{{SHIPMENT_ID}}/track
+Authorization: Bearer {{JWT}}
+
+###
+POST http://localhost:8081/v1/shipments/{{SHIPMENT_ID}}/route
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "address": "Intermediate Stop" }
+
+###
+# Proof of Delivery
+POST http://localhost:8081/v1/deliveries/{{SHIPMENT_ID}}/complete
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "signedBy": "Receiver Name", "photoUrl": "https://example.com/pod.jpg" }
+###
+# Transport Jobs
+# List posted jobs
+GET http://localhost:8081/v1/transport/jobs
+Authorization: Bearer {{JWT}}
+
+###
+# List my jobs (assigned)
+GET http://localhost:8081/v1/transport/jobs?mine=1
+Authorization: Bearer {{JWT}}
+
+###
+# Create job
+POST http://localhost:8081/v1/transport/jobs
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{
+  "pickupAddress": "Factory A, City",
+  "deliveryAddress": "Retailer B, City",
+  "cargoDesc": "10 pallets of goods",
+  "vehicleKind": "truck",
+  "capacityKg": 5000,
+  "payment": 250.00,
+  "currency": "USD"
+}
+
+###
+# Assign job (driver accepts)
+PUT http://localhost:8081/v1/transport/jobs/{{JOB_ID}}/assign
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "vehicleId": "{{VEHICLE_ID}}" }
+
+###
+# Job tracking (driver)
+POST http://localhost:8081/v1/transport/jobs/{{JOB_ID}}/tracking
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "lat": 0.045, "lng": 37.015 }
+
+###
+# Complete job
+POST http://localhost:8081/v1/transport/jobs/{{JOB_ID}}/complete
+Authorization: Bearer {{JWT}}

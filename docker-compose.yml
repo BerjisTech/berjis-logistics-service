@@ -1,0 +1,31 @@
+services:
+  logistics-db:
+    image: postgres:15-alpine
+    container_name: logistics-db
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_USER: postgres
+      POSTGRES_DB: berjis_logistics
+    ports:
+      - "5434:5432"
+    volumes:
+      - logistics_pgdata:/var/lib/postgresql/data
+
+  logistics:
+    build: .
+    container_name: logistics-service
+    depends_on:
+      - logistics-db
+    environment:
+      APP_NAME: berjis-logistics
+      APP_ENV: development
+      PORT: "8081"
+      DATABASE_URL: postgres://postgres:postgres@logistics-db:5432/berjis_logistics?sslmode=disable
+      CORE_API_BASE: http://host.docker.internal:8080
+      ALLOWED_ORIGINS: http://localhost:4300,http://localhost:8081
+      AUTH_JWT_HS256_SECRET: change-me-dev-only
+    ports:
+      - "8081:8081"
+
+volumes:
+  logistics_pgdata: {}
