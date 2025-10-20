@@ -171,3 +171,61 @@ Content-Type: application/json
 # Complete job
 POST http://localhost:8081/v1/transport/jobs/{{JOB_ID}}/complete
 Authorization: Bearer {{JWT}}
+###
+# Stores
+POST http://localhost:8081/v1/stores
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "name": "Acme Store", "slug": "acme" }
+
+###
+GET http://localhost:8081/v1/stores
+Authorization: Bearer {{JWT}}
+
+###
+# Products
+POST http://localhost:8081/v1/products
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "sku": "SKU-001", "name": "Widget", "price": 19.99, "currency": "USD" }
+
+###
+GET http://localhost:8081/v1/products
+Authorization: Bearer {{JWT}}
+
+###
+# Assign product to store
+POST http://localhost:8081/v1/stores/{{STORE_ID}}/products
+Authorization: Bearer {{JWT}}
+Content-Type: application/json
+
+{ "productId": "{{PRODUCT_ID}}", "priceOverride": 17.99 }
+
+###
+# Public store landing
+GET http://localhost:8081/v1/public/store/acme
+###
+# Store assigned products (owner)
+GET http://localhost:8081/v1/stores/{{STORE_ID}}/products
+Authorization: Bearer {{JWT}}
+
+###
+# Admin roles
+GET http://localhost:8081/v1/admin/users/{{USER_ID}}/roles
+Authorization: Bearer {{ADMIN_JWT}}
+
+###
+POST http://localhost:8081/v1/admin/users/{{USER_ID}}/roles
+Authorization: Bearer {{ADMIN_JWT}}
+Content-Type: application/json
+
+{ "role": "paid" }
+
+###
+DELETE http://localhost:8081/v1/admin/users/{{USER_ID}}/roles
+Authorization: Bearer {{ADMIN_JWT}}
+Content-Type: application/json
+
+{ "role": "paid" }
