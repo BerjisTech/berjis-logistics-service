@@ -9,8 +9,10 @@ RUN mkdir -p /out \
  && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o /out/berjis-logistics ./cmd/service
 
 FROM gcr.io/distroless/base-debian12
-WORKDIR /
-COPY --from=build /out/berjis-logistics /berjis-logistics
+WORKDIR /app
+COPY --from=build /out/berjis-logistics /app/berjis-logistics
+COPY --from=build /app/migrations /app/migrations
+ENV MIGRATIONS_DIR=/app/migrations
 EXPOSE 8081
 USER 65532:65532
-ENTRYPOINT ["/berjis-logistics"]
+ENTRYPOINT ["/app/berjis-logistics"]

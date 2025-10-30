@@ -22,7 +22,7 @@ services:
       PORT: "8081"
       DATABASE_URL: postgres://postgres:postgres@logistics-db:5432/berjis_logistics?sslmode=disable
       CORE_API_BASE: http://host.docker.internal:8080
-      ALLOWED_ORIGINS: http://localhost:4300,http://localhost:8081
+      ALLOWED_ORIGINS: http://localhost:4300,https://logistics-api.berjis.tech
       AUTH_JWT_HS256_SECRET: change-me-dev-only
     ports:
       - "8081:8081"
