@@ -1,31 +1,31 @@
 services:
-  logistics-db:
+  cribs-db:
     image: postgres:15-alpine
-    container_name: logistics-db
+    container_name: cribs-db
     environment:
       POSTGRES_PASSWORD: postgres
       POSTGRES_USER: postgres
-      POSTGRES_DB: berjis_logistics
+      POSTGRES_DB: berjis_cribs
     ports:
       - "5434:5432"
     volumes:
-      - logistics_pgdata:/var/lib/postgresql/data
+      - cribs_pgdata:/var/lib/postgresql/data
 
-  logistics:
+  cribs:
     build: .
-    container_name: logistics-service
+    container_name: cribs-service
     depends_on:
-      - logistics-db
+      - cribs-db
     environment:
-      APP_NAME: berjis-logistics
+      APP_NAME: berjis-cribs
       APP_ENV: development
-      PORT: "8081"
-      DATABASE_URL: postgres://postgres:postgres@logistics-db:5432/berjis_logistics?sslmode=disable
+      PORT: "8095"
+      DATABASE_URL: postgres://postgres:postgres@cribs-db:5432/berjis_cribs?sslmode=disable
       CORE_API_BASE: http://host.docker.internal:8080
-      ALLOWED_ORIGINS: http://localhost:4300,https://logistics.berjis.tech,https://logistics-admin.berjis.tech
+      ALLOWED_ORIGINS: http://localhost:4300,https://cribs.berjis.tech,https://cribs-api.berjis.tech
       AUTH_JWT_HS256_SECRET: change-me-dev-only
     ports:
-      - "8081:8081"
+      - "8095:8095"
 
 volumes:
-  logistics_pgdata: {}
+  cribs_pgdata: {}

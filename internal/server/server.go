@@ -133,7 +133,7 @@ func New(opts Options) *fiber.App {
 	app.Use(cors.New(cors.Config{
 		AllowOrigins:     opts.AllowedOrigins,
 		AllowMethods:     "GET,POST,PUT,PATCH,DELETE,OPTIONS",
-		AllowHeaders:     "Authorization,Content-Type,Accept,X-User-ID",
+		AllowHeaders:     "Authorization,Content-Type,Accept,X-User-UUID",
 		AllowCredentials: true,
 	}))
 

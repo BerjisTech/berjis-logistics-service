@@ -26,7 +26,7 @@ func Load() Config {
 		Port:            getenv("PORT", "8081"),
 		DatabaseURL:     getenv("DATABASE_URL", "postgres://postgres:postgres@localhost:5434/berjis_logistics?sslmode=disable"),
 		CoreAPIBase:     getenv("CORE_API_BASE", "http://localhost:8080"),
-		AllowedOrigins:  getenv("ALLOWED_ORIGINS", "http://localhost:4300,https://logistics.berjis.tech,https://logistics-admin.berjis.tech"),
+		AllowedOrigins:  getenv("ALLOWED_ORIGINS", "http://localhost:4300,https://logistics.berjis.tech,https://logistics-api.berjis.tech"),
 		AuthHS256Secret: getenv("AUTH_JWT_HS256_SECRET", ""),
 	}
 }
