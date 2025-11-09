@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"os"
 	"strconv"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/berjistech/berjis-ecosystem/logistics/service/internal/auth"
 	"github.com/berjistech/berjis-ecosystem/logistics/service/internal/media"
+	coreauth "github.com/berjistech/berjis-ecosystem/shared/coreauth"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
@@ -168,8 +170,26 @@ func New(opts Options) *fiber.App {
 		return fiber.ErrUpgradeRequired
 	})
 
+	httpClientAuth := &http.Client{Timeout: 8 * time.Second}
+	var authVerifier *coreauth.Verifier
+	if base := strings.TrimSpace(opts.CoreAPIBase); base != "" {
+		if v, err := coreauth.NewVerifier(coreauth.Config{
+			CoreAPIBase: base,
+			HTTPClient:  httpClientAuth,
+		}); err != nil {
+			fmt.Printf("warn: coreauth verifier init failed: %v\n", err)
+		} else {
+			authVerifier = v
+		}
+	}
 	// Protect all following routes
-	app.Use(auth.Middleware(auth.Options{HS256Secret: opts.AuthHS256, Env: opts.Env, CoreAPIBase: opts.CoreAPIBase}))
+	app.Use(auth.Middleware(auth.Options{
+		HS256Secret: opts.AuthHS256,
+		Env:         opts.Env,
+		CoreAPIBase: opts.CoreAPIBase,
+		HTTPClient:  httpClientAuth,
+		Verifier:    authVerifier,
+	}))
 
 	// Quick auth ping for frontends to validate session via Core cookies.
 	app.Get("/v1/auth/ping", func(c *fiber.Ctx) error {

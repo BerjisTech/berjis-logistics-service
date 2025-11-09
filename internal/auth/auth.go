@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	coreauth "github.com/berjistech/berjis-ecosystem/shared/coreauth"
 	"github.com/gofiber/fiber/v2"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
@@ -16,6 +17,8 @@ type Options struct {
 	HS256Secret string
 	Env         string
 	CoreAPIBase string
+	HTTPClient  *http.Client
+	Verifier    *coreauth.Verifier
 }
 
 type User struct {
@@ -26,16 +29,27 @@ type User struct {
 const userKey = "userID"
 
 func Middleware(opts Options) fiber.Handler {
-	client := &http.Client{}
+	client := opts.HTTPClient
+	if client == nil {
+		client = &http.Client{}
+	}
 	return func(c *fiber.Ctx) error {
 		var uid string
 
 		authz := strings.TrimSpace(c.Get("Authorization"))
+		tokenStr := ""
+		if strings.HasPrefix(strings.ToLower(authz), "bearer ") {
+			tokenStr = strings.TrimSpace(authz[7:])
+		}
+		if tokenStr == "" {
+			tokenStr = strings.TrimSpace(c.Cookies("access", ""))
+		}
+
 		// If we have a local secret configured, validate the bearer token locally first.
-		if strings.HasPrefix(strings.ToLower(authz), "bearer ") && strings.TrimSpace(opts.HS256Secret) != "" {
-			tokenStr := strings.TrimSpace(authz[7:])
+		if tokenPart := strings.TrimSpace(opts.HS256Secret); tokenPart != "" && strings.HasPrefix(strings.ToLower(authz), "bearer ") {
+			raw := strings.TrimSpace(authz[7:])
 			claims := jwt.MapClaims{}
-			token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+			token, err := jwt.ParseWithClaims(raw, claims, func(token *jwt.Token) (interface{}, error) {
 				if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 					return nil, errors.New("unexpected signing method")
 				}
@@ -48,6 +62,15 @@ func Middleware(opts Options) fiber.Handler {
 						uid = sub
 					}
 				}
+			}
+		}
+
+		// Verify against Core JWTs via shared JWKS when available.
+		if uid == "" && tokenStr != "" && opts.Verifier != nil {
+			if claims, err := opts.Verifier.Verify(tokenStr); err == nil {
+				uid = claims.UUID
+			} else if errors.Is(err, coreauth.ErrTokenInvalid) || errors.Is(err, coreauth.ErrTokenExpired) || errors.Is(err, coreauth.ErrTokenMissing) {
+				return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "login required"})
 			}
 		}
 
