@@ -189,7 +189,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 			allowed = true
 		}
 		if !allowed {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to update this warehouse", "code": "PERMISSION_DENIED"})
 		}
 
 		var w Warehouse
@@ -244,7 +244,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
 		}
 		if !(isOwnerOrAdmin(opts.DB, wid, uid) || hasPermission(opts.DB, wid, uid, "manage_staff")) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to view staff for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		out := []staffRow{}
 		if err := opts.DB.Select(&out, `SELECT user_id, role, COALESCE(permissions,'{}'::jsonb) AS permissions FROM warehouse_staff WHERE warehouse_id=$1 ORDER BY role`, wid); err != nil {
@@ -261,7 +261,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
 		}
 		if !(isOwnerOrAdmin(opts.DB, wid, uid) || hasPermission(opts.DB, wid, uid, "manage_staff")) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to manage staff for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		var in staffIn
 		if err := c.BodyParser(&in); err != nil || strings.TrimSpace(in.UserID) == "" {
@@ -288,7 +288,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
 		}
 		if !(isOwnerOrAdmin(opts.DB, wid, uid) || hasPermission(opts.DB, wid, uid, "manage_staff")) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to remove staff from this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		if _, err := opts.DB.Exec(`DELETE FROM warehouse_staff WHERE warehouse_id=$1 AND user_id=$2`, wid, member); err != nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
@@ -309,7 +309,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
               SELECT 1 FROM warehouse_staff s WHERE s.warehouse_id=w.id AND s.user_id=$2
             ))
           )`, wid, uid); err != nil || !allowed {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to view units for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		out := []warehouseUnitRow{}
 		if err := opts.DB.Select(&out, `SELECT id, name, area_sqm, kind, state, price_amount, currency, pricing_mode FROM warehouse_units WHERE warehouse_id=$1 ORDER BY name`, wid); err != nil {
@@ -326,7 +326,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
 		}
 		if !(isOwnerOrAdmin(opts.DB, wid, uid) || hasPermission(opts.DB, wid, uid, "manage_units")) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to create units for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		var in warehouseUnitIn
 		if err := c.BodyParser(&in); err != nil || strings.TrimSpace(in.Name) == "" {
@@ -354,6 +354,10 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 		if err := c.BodyParser(&in); err != nil || strings.TrimSpace(in.Name) == "" {
 			return c.Status(fiber.StatusBadRequest).JSON(fiber.Map{"success": false})
 		}
+		// Clearer permission error before DB update
+		if !(isOwnerOrAdmin(opts.DB, wid, user) || hasPermission(opts.DB, wid, user, "manage_units")) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to update units for this warehouse", "code": "PERMISSION_DENIED"})
+		}
 		var row warehouseUnitRow
 		if err := opts.DB.Get(&row, `UPDATE warehouse_units SET
             name=$1,
@@ -376,7 +380,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
           )
           RETURNING id, name, area_sqm, kind, state, price_amount, currency, pricing_mode`,
 			in.Name, in.AreaSqm, in.Kind, in.State, in.PriceAmount, in.Currency, in.PricingMode, unitID, wid, user); err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false, "message": "Unit not found"})
 		}
 		return c.JSON(fiber.Map{"success": true, "data": row})
 	})
@@ -388,6 +392,9 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 		user := auth.UserID(c)
 		if opts.DB == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+		}
+		if !(isOwnerOrAdmin(opts.DB, wid, user) || hasPermission(opts.DB, wid, user, "manage_units")) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to delete units for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		res, err := opts.DB.Exec(`DELETE FROM warehouse_units WHERE id=$1 AND warehouse_id=$2 AND (
             EXISTS (SELECT 1 FROM warehouses w WHERE w.id=$2 AND (
@@ -418,7 +425,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
               SELECT 1 FROM warehouse_staff s WHERE s.warehouse_id=w.id AND s.user_id=$2
             ))
           )`, wid, uid); err != nil || !allowed {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to view inventory for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		out := []InventoryItem{}
 		if err := opts.DB.Select(&out, `SELECT id, warehouse_id, sku, name, quantity FROM inventory WHERE warehouse_id=$1 ORDER BY sku`, wid); err != nil {
@@ -442,7 +449,10 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 			in.Quantity = 0
 		}
 		if !(isOwnerOrAdmin(opts.DB, wid, user) || hasPermission(opts.DB, wid, user, "manage_inventory")) {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false})
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to add inventory to this warehouse", "code": "PERMISSION_DENIED"})
+		}
+		if !(isOwnerOrAdmin(opts.DB, wid, user) || hasPermission(opts.DB, wid, user, "manage_inventory")) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to update inventory for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		var item InventoryItem
 		if err := opts.DB.Get(&item, `INSERT INTO inventory (warehouse_id, sku, name, quantity)
@@ -483,7 +493,7 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
           )
           RETURNING id, warehouse_id, sku, name, quantity`,
 			in.SKU, in.Name, in.Quantity, itemID, wid, user); err != nil {
-			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false, "message": "not found"})
+			return c.Status(fiber.StatusNotFound).JSON(fiber.Map{"success": false, "message": "Item not found"})
 		}
 		return c.JSON(fiber.Map{"success": true, "data": item})
 	})
@@ -495,6 +505,9 @@ func registerStorageRoutes(app *fiber.App, opts Options) {
 		user := auth.UserID(c)
 		if opts.DB == nil {
 			return c.Status(fiber.StatusInternalServerError).JSON(fiber.Map{"success": false})
+		}
+		if !(isOwnerOrAdmin(opts.DB, wid, user) || hasPermission(opts.DB, wid, user, "manage_inventory")) {
+			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false, "message": "You don't have permission to delete inventory for this warehouse", "code": "PERMISSION_DENIED"})
 		}
 		res, err := opts.DB.Exec(`DELETE FROM inventory WHERE id=$1 AND warehouse_id=$2 AND (
             EXISTS (SELECT 1 FROM warehouses w WHERE w.id=$2 AND (

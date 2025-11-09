@@ -236,7 +236,7 @@ func registerStorefrontRoutes(app *fiber.App, opts Options) {
 		}
 		var isAdmin bool
 		_ = opts.DB.Get(&isAdmin, `SELECT EXISTS (SELECT 1 FROM user_roles WHERE user_id=$1 AND role='platform.admin')`, uid)
-		if (!isAdmin) {
+		if !isAdmin {
 			return c.Status(fiber.StatusForbidden).JSON(fiber.Map{"success": false})
 		}
 		var in struct {

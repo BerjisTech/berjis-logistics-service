@@ -4,11 +4,13 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/berjistech/berjis-ecosystem/logistics/service/internal/auth"
+	"github.com/berjistech/berjis-ecosystem/logistics/service/internal/media"
 	"github.com/gofiber/fiber/v2"
 	"github.com/gofiber/fiber/v2/middleware/cors"
 	"github.com/gofiber/fiber/v2/middleware/limiter"
@@ -22,6 +24,7 @@ type Options struct {
 	DB             *sqlx.DB
 	Env            string
 	AuthHS256      string
+	CoreAPIBase    string
 }
 
 type Vehicle struct {
@@ -137,6 +140,13 @@ func New(opts Options) *fiber.App {
 		AllowCredentials: true,
 	}))
 
+	// Serve local uploads during development and Docker runs.
+	// This mirrors other apps (e.g., communities/marketplace) that mount /data/uploads.
+	uploadsDir := media.UploadsDir()
+	uploadsPath := media.UploadsPublicPath()
+	_ = os.MkdirAll(uploadsDir, 0o755)
+	app.Static(uploadsPath, uploadsDir)
+
 	// Health
 	app.Get("/v1/health", func(c *fiber.Ctx) error {
 		return c.JSON(fiber.Map{"success": true, "message": "ok"})
@@ -159,9 +169,19 @@ func New(opts Options) *fiber.App {
 	})
 
 	// Protect all following routes
-	app.Use(auth.Middleware(auth.Options{HS256Secret: opts.AuthHS256, Env: opts.Env}))
+	app.Use(auth.Middleware(auth.Options{HS256Secret: opts.AuthHS256, Env: opts.Env, CoreAPIBase: opts.CoreAPIBase}))
+
+	// Quick auth ping for frontends to validate session via Core cookies.
+	app.Get("/v1/auth/ping", func(c *fiber.Ctx) error {
+		uid := auth.UserID(c)
+		if strings.TrimSpace(uid) == "" {
+			return c.Status(fiber.StatusUnauthorized).JSON(fiber.Map{"success": false, "message": "unauthorized"})
+		}
+		return c.JSON(fiber.Map{"success": true, "data": fiber.Map{"userId": uid}})
+	})
 
 	registerStorageRoutes(app, opts)
+	registerMediaRoutes(app, opts)
 	registerFinanceRoutes(app, opts)
 	registerMarketingRoutes(app, opts)
 	registerAnalyticsRoutes(app, opts)
